@@ -12,3 +12,5 @@
     :license:   GPL-3.0, see LICENSE for more details.
     :copyright: Copyright (c) 2017-2021 lightless. All rights reserved
 """
+from .leaks import SkylarkLeaksModel
+from .search_rules import SkylarkSearchRulesModel
