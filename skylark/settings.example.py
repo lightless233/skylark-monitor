@@ -133,6 +133,13 @@ STATIC_URL = '/static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# 日志设置
 LOG_TO_FILE = True
 LOG_FILENAME = "skylark.log"
 LOG_PATH = "./logs/"
+
+# REDIS 设置
+REDIS_HOST = "localhost"
+REDIS_PORT = 6379
+REDIS_PASSWORD = "123456"
+REDIS_DB_INDEX = 0
