@@ -47,7 +47,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     # 'django.contrib.messages',
     # 'django.contrib.staticfiles',
-    "skylark.database"
+    "skylark.database",
+    "skylark.server",
 ]
 
 MIDDLEWARE = [
