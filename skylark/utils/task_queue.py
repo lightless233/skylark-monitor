@@ -23,6 +23,10 @@ class TaskQueue:
 
     @classmethod
     def get_queue(cls, queue_name):
-        return RedisQueue(
+        _queue = RedisQueue(
             settings.REDIS_HOST, settings.REDIS_PORT, settings.REDIS_PASSWORD, settings.REDIS_DB_INDEX, queue_name
-        ).connect()
+        )
+        if _queue.connect():
+            return _queue
+        else:
+            return None

@@ -20,3 +20,4 @@ class GlobalVars:
 
 class QueuesName:
     SEARCH_QUEUE = "skylark_mon_search_queue"
+    SAVE_QUEUE = "skylark_mon_save_queue"

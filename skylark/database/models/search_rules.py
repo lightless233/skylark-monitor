@@ -18,7 +18,9 @@ from ._base import BaseModel
 
 
 class SkylarkSearchRulesManager(models.Manager):
-    pass
+
+    def get_all_enabled_rules(self):
+        return self.filter(is_deleted=0, status=1).all()
 
 
 class SkylarkSearchRulesModel(BaseModel):
