@@ -14,16 +14,21 @@
 """
 import json
 import threading
+import traceback
 
+import requests
 from silex.engines import MultiThreadEngine
 
 from skylark.constant import QueuesName
+from skylark.utils.commons import CommonsUtil
 from skylark.utils.logger import LoggerFactory
 from skylark.utils.task_queue import TaskQueue
 
 
 class SearcherEngine(MultiThreadEngine):
     logger = LoggerFactory.get_logger(__name__)
+
+    SEARCH_API = ""  # TODO 换成OpenApi
 
     def __init__(self):
         super(SearcherEngine, self).__init__("SearcherEngine")
@@ -52,6 +57,12 @@ class SearcherEngine(MultiThreadEngine):
         return msg
 
     def connect_queue(self):
+        """
+        连接到 redis 队列，返回两个队列对象
+        分别是 search_queue 和 save_queue
+        同时也会存储在 local 变量中
+        :return:
+        """
         try:
             search_queue = TaskQueue.get_queue(QueuesName.SEARCH_QUEUE)
             save_queue = TaskQueue.get_queue(QueuesName.SAVE_QUEUE)
@@ -73,12 +84,46 @@ class SearcherEngine(MultiThreadEngine):
         escaped_keyword_list = list(map(lambda x: x.encode("unicode_escape").decode("utf8"), keyword_list))
         return "+".join(escaped_keyword_list)
 
+    def build_request_params(self, keyword):
+        return {
+            "tab": "public",
+            "scope": "/",
+            "type": "content",
+            "q": self._encode_rule(keyword)
+        }
+
+    def do_request(self, params):
+        """
+        发起搜素请求
+        :param params:
+        :return:
+        """
+        retry = 3
+        while retry and self.is_running_status():
+            retry -= 1
+
+            # 随机选取一个代理设置，如果设置不使用代理，则返回空字典
+            proxies = CommonsUtil.get_random_proxy()
+
+            # 获取一个 cookie
+            cookies = self.get_valid_cookie()
+
+            try:
+                response = requests.get(self.SEARCH_API, params=params, cookies=cookies, timeout=9, proxies=proxies)
+                return response.json()
+            except requests.RequestException as e:
+                self.logger.error(
+                    "Error while request to search api. error: {}, traceback: {}".format(e, traceback.format_exc()))
+        else:
+            # 已达到最大请求次数
+            pass
+
     def _worker(self):
         self.local.current_name = current_name = threading.current_thread().name
         self.logger.info(f"{current_name} start.")
 
         # 连接到 redis 队列
-        search_queue, save_queue = self.connect_queue()
+        self.connect_queue()
 
         # 主循环
         while self.is_running_status():
@@ -93,5 +138,11 @@ class SearcherEngine(MultiThreadEngine):
 
             rule_id = message["rule_id"]
             rule_content = message["rule_content"]
+
+            # 对搜素词进行编码
+            encoded_keyword = self._encode_rule(rule_content)
+            self.logger.debug("rule_content: {}, after encode: {}".format(rule_content, encoded_keyword))
+
+            self.do_request(rule_content)
 
         self.logger.info(f"{current_name} end.")

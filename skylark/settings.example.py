@@ -143,3 +143,14 @@ REDIS_HOST = "localhost"
 REDIS_PORT = 6379
 REDIS_PASSWORD = "123456"
 REDIS_DB_INDEX = 0
+
+# SOCKS 5 代理设置
+# 如果有多个代理，只需要按照格式填充 PROXIES_LIST 即可
+# 每次发起 HTTP/HTTPS 请求前，会自动随机选取一个代理使用
+USE_PROXY = False
+PROXIES_LIST = [
+    {
+        "http": "socks5h://user:pass@127.0.0.1:1080",
+        "https": "socks5h://user:pass@127.0.0.1:1080",
+    }
+]
