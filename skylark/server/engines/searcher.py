@@ -20,6 +20,7 @@ import requests
 from silex.engines import MultiThreadEngine
 
 from skylark.constant import QueuesName, SearchMsg
+from skylark.database.models.token import SkylarkTokenModel
 from skylark.utils.commons import CommonsUtil
 from skylark.utils.logger import LoggerFactory
 from skylark.utils.task_queue import TaskQueue
@@ -81,18 +82,26 @@ class SearcherEngine(MultiThreadEngine):
 
     def build_request_params(self, keyword):
         return {
-            "tab": "public",
-            "scope": "/",
-            "type": "content",
-            "q": self._encode_rule(keyword)
+            "type": "doc",
+            "q": self._encode_rule(keyword),
+            "offset": 0,
         }
 
-    def do_request(self, params):
+    @staticmethod
+    def get_valid_token():
+        return SkylarkTokenModel.objects.get_available_token()
+
+    def do_request(self, keyword):
         """
         发起搜素请求
-        :param params:
+        :param keyword:
         :return:
         """
+
+        # 构建请求参数
+        params = self.build_request_params(keyword)
+        self.logger.debug(f"request params: {params}")
+
         retry = 3
         while retry and self.is_running_status():
             retry -= 1
@@ -101,17 +110,24 @@ class SearcherEngine(MultiThreadEngine):
             proxies = CommonsUtil.get_random_proxy()
 
             # 获取一个 token
-            cookies = self.get_valid_cookie()
+            token = self.get_valid_token()
+            headers = {
+                "x-auth-token": token
+            }
 
             try:
-                response = requests.get(self.SEARCH_API, params=params, cookies=cookies, timeout=9, proxies=proxies)
+                response = requests.get(self.SEARCH_API, params=params, headers=headers, timeout=9, proxies=proxies)
                 return response.json()
             except requests.RequestException as e:
                 self.logger.error(
                     "Error while request to search api. error: {}, traceback: {}".format(e, traceback.format_exc()))
         else:
             # 已达到最大请求次数
-            pass
+            self.logger.warning(f"request max retry times exceeded. {keyword=}")
+            return None
+
+    def parse_response(self, response: dict):
+
 
     def _worker(self):
         self.local.current_name = current_name = threading.current_thread().name
@@ -131,13 +147,11 @@ class SearcherEngine(MultiThreadEngine):
                 self.ev.wait(1)
                 continue
 
-            rule_id = message["rule_id"]
-            rule_content = message["rule_content"]
+            # 调用搜素 API
+            response = self.do_request(message.content)
+            if not response:
+                continue
 
-            # 对搜素词进行编码
-            encoded_keyword = self._encode_rule(rule_content)
-            self.logger.debug("rule_content: {}, after encode: {}".format(rule_content, encoded_keyword))
-
-            self.do_request(rule_content)
+            result = self.parse_response(response)
 
         self.logger.info(f"{current_name} end.")
