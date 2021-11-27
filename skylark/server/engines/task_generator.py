@@ -13,12 +13,12 @@
     :copyright: Copyright (c) 2017-2021 lightless. All rights reserved
 """
 import datetime
-import json
 
 from silex.engines import SingleThreadEngine
 
-from skylark.constant import QueuesName
+from skylark.constant import QueuesName, SearchMsg
 from skylark.database.models import SkylarkSearchRulesModel
+from skylark.database.models.token import SkylarkTokenModel
 from skylark.utils.logger import LoggerFactory
 from skylark.utils.task_queue import TaskQueue
 
@@ -52,11 +52,17 @@ class TaskGenerator(SingleThreadEngine):
             for _rule in all_rules:
                 if _rule.last_search_time + datetime.timedelta(minutes=_rule.interval) < datetime.datetime.now():
                     # 该刷新了
-                    message = {
-                        "rule_id": _rule.id,
-                        "content": _rule.content,
-                    }
+
+                    msg = SearchMsg()
+                    msg.rule_id = _rule.id
+                    msg.content = _rule.content
+
+                    # 获取一个 token 一同给 searcher
+                    token_row = SkylarkTokenModel.objects.get_available_token()
+                    msg.token_id = token_row.id
+                    msg.token = token_row.token
+
                     self.logger.debug("put rule to queue, id: {}, content: {}".format(_rule.id, _rule.content))
-                    search_queue.put_message(json.dumps(message))
+                    search_queue.put_message(msg.to_str())
 
         self.logger.info(f"{self.name} stop.")

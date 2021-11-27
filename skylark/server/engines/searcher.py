@@ -19,7 +19,7 @@ import traceback
 import requests
 from silex.engines import MultiThreadEngine
 
-from skylark.constant import QueuesName
+from skylark.constant import QueuesName, SearchMsg
 from skylark.utils.commons import CommonsUtil
 from skylark.utils.logger import LoggerFactory
 from skylark.utils.task_queue import TaskQueue
@@ -28,7 +28,7 @@ from skylark.utils.task_queue import TaskQueue
 class SearcherEngine(MultiThreadEngine):
     logger = LoggerFactory.get_logger(__name__)
 
-    SEARCH_API = ""  # TODO 换成OpenApi
+    SEARCH_API = "https://www.yuque.com/api/v2/search"
 
     def __init__(self):
         super(SearcherEngine, self).__init__("SearcherEngine")
@@ -41,17 +41,12 @@ class SearcherEngine(MultiThreadEngine):
 
     def parse_search_message(self, message):
         try:
-            msg = json.loads(message)
+            msg: SearchMsg = SearchMsg.from_str(message)
         except json.JSONDecodeError:
             self.logger.warning("{} Receive invalid message: {}".format(self.local.current_name, message))
             return None
-
-        rule_id = msg.get("rule_id")
-        rule_content = msg.get("content")
-        if not rule_id or not rule_content:
-            self.logger.warning(
-                "{} Receive invalid message: {}, missing field.".format(self.local.current_name, message)
-            )
+        except ValueError as e:
+            self.logger.warning(f"msg value error: {message=}, error: {e}")
             return None
 
         return msg
@@ -105,7 +100,7 @@ class SearcherEngine(MultiThreadEngine):
             # 随机选取一个代理设置，如果设置不使用代理，则返回空字典
             proxies = CommonsUtil.get_random_proxy()
 
-            # 获取一个 cookie
+            # 获取一个 token
             cookies = self.get_valid_cookie()
 
             try:
