@@ -5,7 +5,13 @@
     searcher
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    $END$
+    由于搜素 API 没有排序功能，且我们只需要最近更新的数据
+    需要请求到所有的内容，然后对结果按照更新时间进行排序，然后再获取最新更新的 doc 数据
+    排序方案有两种：
+      1. 使用 DB 排序，创建一个表，rule_id, doc_id, update_time，每次搜素完成后，将对应规则 ID 的数据进行排序
+      2. 使用 redis 排序，使用 sorted set，分数为时间戳，值为 doc id，每个规则创建一个新的 set
+    使用 DB 可以复用数据，但是要一条一条检查更新时间是否发生变更
+    使用 redis 不能复用历史数据，但是可以直接内存排序
 
     :author:    lightless <root@lightless.me>
     :homepage:  None
@@ -14,7 +20,9 @@
 """
 import json
 import threading
+import time
 import traceback
+import typing
 
 import requests
 from silex.engines import MultiThreadEngine
@@ -23,7 +31,7 @@ from skylark.constant import QueuesName, SearchMsg
 from skylark.database.models.token import SkylarkTokenModel
 from skylark.utils.commons import CommonsUtil
 from skylark.utils.logger import LoggerFactory
-from skylark.utils.task_queue import TaskQueue
+from skylark.utils.task_queue import TaskQueue, RawRedis
 
 
 class SearcherEngine(MultiThreadEngine):
@@ -80,26 +88,27 @@ class SearcherEngine(MultiThreadEngine):
         escaped_keyword_list = list(map(lambda x: x.encode("unicode_escape").decode("utf8"), keyword_list))
         return "+".join(escaped_keyword_list)
 
-    def build_request_params(self, keyword):
+    def build_request_params(self, keyword, page):
         return {
             "type": "doc",
             "q": self._encode_rule(keyword),
-            "offset": 0,
+            "offset": page,
         }
 
     @staticmethod
     def get_valid_token():
         return SkylarkTokenModel.objects.get_available_token()
 
-    def do_request(self, keyword):
+    def do_request(self, keyword, page) -> typing.Optional[dict]:
         """
-        发起搜素请求
+        发起搜素请求，每次请求一页，请求第几页由 page 参数控制
         :param keyword:
+        :param page:
         :return:
         """
 
         # 构建请求参数
-        params = self.build_request_params(keyword)
+        params = self.build_request_params(keyword, page)
         self.logger.debug(f"request params: {params}")
 
         retry = 3
@@ -126,8 +135,37 @@ class SearcherEngine(MultiThreadEngine):
             self.logger.warning(f"request max retry times exceeded. {keyword=}")
             return None
 
-    def parse_response(self, response: dict):
+    @staticmethod
+    def conv(t):
+        return int(time.mktime(time.strptime(t, "%Y-%m-%dT%H:%M:%S.%f%z")))
 
+    def parse_doc_meta(self, response: dict) -> list:
+        data = response.get("data")
+        if not data:
+            return []
+        return [{it.get("id"): self.conv(it.get("target").get("content_updated_at"))} for it in data]
+
+    def sort_docs(self, docs_meta: list):
+        """
+        对搜素到的结果按照更新时间进行排序
+        先采用 redis 的方案，每次排序完成后删除 redis 中的集合
+        :param docs_meta:
+        :return:
+        """
+        # 1. 生成一个集合名称用于排序
+        set_name = f"{self.local.current_name}_{CommonsUtil.get_random_string()}"
+
+        # 2. 连接 redis
+        r = RawRedis.get_raw_redis()
+
+        # 3. 把待排序的东西扔进去
+        for item in docs_meta:
+            r.zadd(set_name, item)
+
+        # 4. 获取排序后的数据，取最新的 30 个数据
+        docs_id_list = r.zrevrange(set_name, 0, 29)
+
+        return docs_id_list
 
     def _worker(self):
         self.local.current_name = current_name = threading.current_thread().name
@@ -148,10 +186,22 @@ class SearcherEngine(MultiThreadEngine):
                 continue
 
             # 调用搜素 API
-            response = self.do_request(message.content)
-            if not response:
-                continue
+            docs_meta_list = []
+            page = 1
+            while self.is_running_status():
+                self.logger.debug(f"trying to request page {page}")
+                response = self.do_request(message.content, page)
+                page += 1
+                if response is None:
+                    continue
+                if not int(response.get('meta').get("total")):
+                    break
 
-            result = self.parse_response(response)
+                docs_meta_list.extend(self.parse_doc_meta(response))
+
+            self.logger.debug(f"docs_meta_list size: {len(docs_meta_list)}")
+            self.sort_docs(docs_meta_list)
+
+            # TODO：添加任务到下一个引擎中
 
         self.logger.info(f"{current_name} end.")

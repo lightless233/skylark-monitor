@@ -13,11 +13,13 @@
     :copyright: Copyright (c) 2017-2021 lightless. All rights reserved
 """
 import random
+import string
 
 from django.conf import settings
 
 
 class CommonsUtil:
+    char_pool = string.ascii_letters + string.digits
 
     @classmethod
     def get_random_proxy(cls) -> dict[str, str]:
@@ -32,3 +34,12 @@ class CommonsUtil:
                 return random.choice(settings.PROXIES_LIST)
         else:
             return {}
+
+    @classmethod
+    def get_random_string(cls, length=6):
+        """
+        生成随机字符串
+        :param length:
+        :return:
+        """
+        return random.sample(cls.char_pool, length)
