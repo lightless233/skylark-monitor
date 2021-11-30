@@ -27,7 +27,7 @@ import typing
 import requests
 from silex.engines import MultiThreadEngine
 
-from skylark.constant import QueuesName, SearchMsg
+from skylark.constant import QueuesName, SearchMsg, FetchDocMsg
 from skylark.database.models.token import SkylarkTokenModel
 from skylark.utils.commons import CommonsUtil
 from skylark.utils.logger import LoggerFactory
@@ -69,14 +69,14 @@ class SearcherEngine(MultiThreadEngine):
         """
         try:
             search_queue = TaskQueue.get_queue(QueuesName.SEARCH_QUEUE)
-            save_queue = TaskQueue.get_queue(QueuesName.SAVE_QUEUE)
-            if not search_queue or not save_queue:
+            fetch_docs_queue = TaskQueue.get_queue(QueuesName.FETCH_DOC_INFO_QUEUE)
+            if not search_queue or not fetch_docs_queue:
                 self.logger.error("Connect to redis failed.")
                 return
 
             self.local.search_queue = search_queue
-            self.local.save_queue = save_queue
-            return search_queue, save_queue
+            self.local.fetch_docs_queue = fetch_docs_queue
+            return search_queue, fetch_docs_queue
 
         except Exception as e:
             self.logger.error("Exception while connecting to redis, error: {}".format(e))
@@ -97,6 +97,11 @@ class SearcherEngine(MultiThreadEngine):
 
     @staticmethod
     def get_valid_token():
+        """
+        临时从直接调用 Model 从数据库获取一个 token
+        TODO 后续封装到 Service 层
+        :return:
+        """
         return SkylarkTokenModel.objects.get_available_token()
 
     def do_request(self, keyword, page) -> typing.Optional[dict]:
@@ -126,6 +131,7 @@ class SearcherEngine(MultiThreadEngine):
 
             try:
                 response = requests.get(self.SEARCH_API, params=params, headers=headers, timeout=9, proxies=proxies)
+                # TODO 更新 token 的剩余次数
                 return response.json()
             except requests.RequestException as e:
                 self.logger.error(
@@ -145,7 +151,7 @@ class SearcherEngine(MultiThreadEngine):
             return []
         return [{it.get("id"): self.conv(it.get("target").get("content_updated_at"))} for it in data]
 
-    def sort_docs(self, docs_meta: list):
+    def sort_docs(self, docs_meta: list) -> list[str]:
         """
         对搜素到的结果按照更新时间进行排序
         先采用 redis 的方案，每次排序完成后删除 redis 中的集合
@@ -164,6 +170,8 @@ class SearcherEngine(MultiThreadEngine):
 
         # 4. 获取排序后的数据，取最新的 30 个数据
         docs_id_list = r.zrevrange(set_name, 0, 29)
+
+        # TODO 删除 sorted set
 
         return docs_id_list
 
@@ -200,8 +208,12 @@ class SearcherEngine(MultiThreadEngine):
                 docs_meta_list.extend(self.parse_doc_meta(response))
 
             self.logger.debug(f"docs_meta_list size: {len(docs_meta_list)}")
-            self.sort_docs(docs_meta_list)
+            sorted_list = self.sort_docs(docs_meta_list)
 
-            # TODO：添加任务到下一个引擎中
+            # 添加任务到下一个引擎中
+            fetch_docs_msg = FetchDocMsg()
+            fetch_docs_msg.rule_id = message.rule_id
+            fetch_docs_msg.docs_id_list = sorted_list
+            self.local.fetch_docs_queue.put_message(fetch_docs_msg.to_str())
 
         self.logger.info(f"{current_name} end.")

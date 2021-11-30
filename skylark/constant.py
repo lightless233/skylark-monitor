@@ -22,6 +22,7 @@ class GlobalVars:
 
 class QueuesName:
     SEARCH_QUEUE = "skylark_mon_search_queue"
+    FETCH_DOC_INFO_QUEUE = "skylark_mon_fetch_doc_queue"
     SAVE_QUEUE = "skylark_mon_save_queue"
 
 
@@ -65,3 +66,9 @@ class SearchMsg(BaseMsg):
     content: str = ""
     token: str = ""
     token_id: int = 0
+
+
+class FetchDocMsg(BaseMsg):
+    rule_id: int = 0
+    docs_id_list: list[str] = []
+
